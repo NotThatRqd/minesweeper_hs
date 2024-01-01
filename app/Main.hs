@@ -9,6 +9,8 @@ import Control.Monad (forM_)
 import Data.Foldable (Foldable(foldr'))
 --import qualified MyLib (someFunc)
 
+type Coords = (Int, Int)
+
 data EmptySquareState = Covered | Flagged | Uncovered deriving (Show, Eq)
 
 data Square = Empty { nearby :: Int, state :: EmptySquareState } | Mine { flagged :: Bool } deriving (Show)
@@ -27,17 +29,17 @@ isMine Empty{} = False
 
 type Board = [[Square]]
 
-getSquareAt :: Board -> Int -> Int -> Square
-getSquareAt board x y = (board !! y) !! x
+getSquareAt :: Board -> Coords -> Square
+getSquareAt board (x, y) = (board !! y) !! x
 
-setSquareAt :: Board -> Int -> Int -> Square -> Board
-setSquareAt board x y square =
+setSquareAt :: Board -> Coords -> Square -> Board
+setSquareAt board (x, y) square =
     let (before, row:after) = splitAt y board
         newRow = take x row ++ [square] ++ drop (x + 1) row
     in before ++ [newRow] ++ after
 
-adjacentCoords :: Board -> Int -> Int -> [(Int, Int)]
-adjacentCoords board x y =
+adjacentCoords :: Board -> Coords -> [Coords]
+adjacentCoords board (x, y) =
     [ (x+dx, y+dy)
     | dx <- [-1, 0, 1]
     , dy <- [-1, 0, 1]
@@ -48,17 +50,17 @@ adjacentCoords board x y =
     , y + dy < length board
     ]
 
-countAdjacentMines :: Board -> Int -> Int -> Int
-countAdjacentMines board x y = length . filter isMine . map (\(x2, y2) -> getSquareAt board x2 y2) $ adjacentCoords board x y
+countAdjacentMines :: Board -> Coords -> Int
+countAdjacentMines board = length . filter isMine . map (getSquareAt board) . adjacentCoords board
 
 calculateNearbyMines :: Board -> Board
 calculateNearbyMines board =
-    [ [ updateSquare x y | (x, square) <- zip [0..] row ]
+    [ [ updateSquare (x, y) | (x, square) <- zip [0..] row ]
     | (y, row) <- zip [0..] board
     ] where
-        updateSquare x y =
-            case getSquareAt board x y of
-                Empty{..} -> Empty { nearby=countAdjacentMines board x y, state=state }
+        updateSquare coords =
+            case getSquareAt board coords of
+                Empty{..} -> Empty { nearby=countAdjacentMines board coords, state=state }
                 Mine{..}  -> Mine { flagged=flagged } -- do nothing to mines
 
 createEmptyBoard :: Int -> Int -> Board
@@ -68,9 +70,9 @@ placeMines :: RandomGen g => Board -> Int -> g -> Board
 placeMines board numMines gen =
     let coords = [ (x, y) | x <- [0 .. length (head board) - 1], y <- [0 .. length board - 1] ]
         mineCoords = take numMines $ nub $ randomRs (0, length coords - 1) gen
-        updateBoard coord b =
-            let (x, y) = coords !! coord
-            in setSquareAt b x y Mine{ flagged=False }
+        updateBoard coordIndex b =
+            let coord = coords !! coordIndex
+            in setSquareAt b coord Mine{ flagged=False }
     in foldr updateBoard board mineCoords
 
 displayBoard :: Board -> String
@@ -118,7 +120,7 @@ game board = do
     putStrLn "" -- empty line
 
     if shouldFlag then
-        let square = getSquareAt board x y
+        let square = getSquareAt board (x, y)
             newSquare =
                 case square of
                     Empty{..} ->
@@ -129,27 +131,27 @@ game board = do
                         else
                             Empty { nearby=nearby, state=Uncovered} -- do nothing, player cannot flag uncovered square
                     Mine{..} -> Mine { flagged=not flagged } -- flip between flagged and unflagged
-        in game $ setSquareAt board x y newSquare
+        in game $ setSquareAt board (x, y) newSquare
     else
-        case getSquareAt board x y of
+        case getSquareAt board (x, y) of
             Empty{..} ->
                 let isCovered Empty{..} = state /= Uncovered
                     isCovered Mine{} = True
-                    newBoard = uncoverSquare board x y
+                    newBoard = uncoverSquare board (x, y)
                 in if all isMine $ filter isCovered $ concat newBoard then
                     putStrLn "You win!"
                 else game newBoard
             Mine{} -> putStrLn "Game Over!"
 
-uncoverSquare :: Board -> Int -> Int -> Board
-uncoverSquare board x y =
-    let currentSquare = getSquareAt board x y
+uncoverSquare :: Board -> Coords -> Board
+uncoverSquare board coords =
+    let currentSquare = getSquareAt board coords
     in case currentSquare of
         Empty{..} ->
             if state == Covered then
-                let newBoard = setSquareAt board x y Empty { nearby=nearby, state=Uncovered }
+                let newBoard = setSquareAt board coords Empty { nearby=nearby, state=Uncovered }
                 in if nearby == 0 then
-                    foldr' (\(nx, ny) b -> uncoverSquare b nx ny) newBoard (adjacentCoords board x y)
+                    foldr' (flip uncoverSquare) newBoard (adjacentCoords board coords) -- apply uncoverSquare to all adjacent squares
                 else
                     newBoard
             else
